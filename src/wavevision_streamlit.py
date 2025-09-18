@@ -78,6 +78,33 @@ with st.sidebar:
         shift_param2 = st.slider("Time Shift 2", -2.0, 2.0, 0.0, 0.01)
         scaling_param2 = st.slider("Time Scaling 2", 0.1, 3.0, 1.0, 0.01)
         amplitude_scaling_param2 = st.slider("Amplitude Scaling 2", 0.1, 3.0, 1.0, 0.01)
+
+        if menu_operation == "Signal Addition":
+            op_mode = st.radio(
+                "Sum Mode",
+                [
+                    "Processed Signal 1 + Processed Signal 2",
+                    "Original Signal 1 + Original Signal 2",
+                    "Original Signal 1 + Processed Signal 2",
+                    "Processed Signal 1 + Original Signal 2"
+                ],
+                index=0,
+                help="Choose which signals to sum for Signal Addition."
+            )
+        elif menu_operation == "Signal Multiplication":
+            op_mode = st.radio(
+                "Multiplication Mode",
+                [
+                    "Processed Signal 1 × Processed Signal 2",
+                    "Original Signal 1 × Original Signal 2",
+                    "Original Signal 1 × Processed Signal 2",
+                    "Processed Signal 1 × Original Signal 2"
+                ],
+                index=0,
+                help="Choose which signals to multiply for Signal Multiplication."
+            )
+        else:
+            op_mode = None
     else:
         sig2_type = None
         amp2 = None
@@ -85,11 +112,23 @@ with st.sidebar:
         shift_param2 = None
         scaling_param2 = None
         amplitude_scaling_param2 = None
+        op_mode = None
 
     if menu_operation == "Time Reversal":
         reversal_target = st.selectbox("Reverse Target", ["Original", "Processed"])
     else:
         reversal_target = None
+
+    if menu_operation in ["Signal Addition", "Signal Multiplication"]:
+        st.markdown(
+            f"<div style='color:{F1_ACCENT};font-size:1.2rem;font-family:Arial Black;'>Time Reversal</div>",
+            unsafe_allow_html=True
+        )
+        reverse_signal1 = st.checkbox("Reverse Signal 1 (before operation)", value=False)
+        reverse_signal2 = st.checkbox("Reverse Signal 2 (before operation)", value=False)
+    else:
+        reverse_signal1 = False
+        reverse_signal2 = False
 
 # --- Signal Generation ---
 t_input = np.linspace(0, 1, num_samples if is_discrete else 500)
@@ -109,11 +148,20 @@ def get_signal(t, amp, freq, sig_type):
     else:
         return generate_base_signal(t, amp=amp, freq=freq)
 
+# --- Signal 1 (original and processed) ---
 s_input = get_signal(t_input, amp, freq, sig_type)
 t_processed, s_processed = t_input, s_input
 t_processed, s_processed = time_shifting(t_processed, s_processed, shift_param)
 t_processed, s_processed = time_scaling(t_processed, s_processed, scaling_param)
 t_processed, s_processed = t_processed, amplitude_scaling(s_processed, amplitude_scaling_param)
+
+# --- Apply time reversal if selected ---
+if reverse_signal1:
+    t_input_rev, s_input_rev = time_reversal(t_input, s_input)
+    t_processed_rev, s_processed_rev = time_reversal(t_processed, s_processed)
+else:
+    t_input_rev, s_input_rev = t_input, s_input
+    t_processed_rev, s_processed_rev = t_processed, s_processed
 
 # --- Signal 2 (if needed) ---
 if menu_operation in ["Signal Addition", "Signal Multiplication"]:
@@ -121,22 +169,66 @@ if menu_operation in ["Signal Addition", "Signal Multiplication"]:
     t2, s2 = time_shifting(t_input, s2, shift_param2)
     t2, s2 = time_scaling(t2, s2, scaling_param2)
     t2, s2 = t2, amplitude_scaling(s2, amplitude_scaling_param2)
+    # Save processed signal 2
+    t2_processed, s2_processed = t2, s2
+    # Also keep original signal 2 (before processing)
+    t2_original = t_input
+    s2_original = get_signal(t_input, amp2, freq2, sig2_type)
+    # --- Apply time reversal if selected ---
+    if reverse_signal2:
+        t2_original_rev, s2_original_rev = time_reversal(t2_original, s2_original)
+        t2_processed_rev, s2_processed_rev = time_reversal(t2_processed, s2_processed)
+    else:
+        t2_original_rev, s2_original_rev = t2_original, s2_original
+        t2_processed_rev, s2_processed_rev = t2_processed, s2_processed
 else:
     t2, s2 = None, None
+    t2_processed, s2_processed = None, None
+    t2_original, s2_original = None, None
+    t2_original_rev, s2_original_rev = None, None
+    t2_processed_rev, s2_processed_rev = None, None
 
 # --- Operations ---
 t_sum, s_sum = None, None
 t_mul, s_mul = None, None
-t_rev, s_rev = None, None
 if menu_operation == "Signal Addition":
-    t_sum, s_sum = t2, signal_addition(s_processed, s2)
-elif menu_operation == "Signal Multiplication":
-    t_mul, s_mul = t2, signal_multiplication(s_processed, s2)
-elif menu_operation == "Time Reversal":
-    if reversal_target == "Original":
-        t_rev, s_rev = time_reversal(t_input, s_input)
+    if op_mode == "Processed Signal 1 + Processed Signal 2":
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    elif op_mode == "Original Signal 1 + Original Signal 2":
+        t1_use, s1_use = t_input_rev, s_input_rev
+        t2_use, s2_use = t2_original_rev, s2_original_rev
+    elif op_mode == "Original Signal 1 + Processed Signal 2":
+        t1_use, s1_use = t_input_rev, s_input_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    elif op_mode == "Processed Signal 1 + Original Signal 2":
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_original_rev, s2_original_rev
     else:
-        t_rev, s_rev = time_reversal(t_processed, s_processed)
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    min_len = min(len(s1_use), len(s2_use))
+    t_sum = t1_use[:min_len]
+    s_sum = signal_addition(s1_use, s2_use)
+elif menu_operation == "Signal Multiplication":
+    if op_mode == "Processed Signal 1 × Processed Signal 2":
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    elif op_mode == "Original Signal 1 × Original Signal 2":
+        t1_use, s1_use = t_input_rev, s_input_rev
+        t2_use, s2_use = t2_original_rev, s2_original_rev
+    elif op_mode == "Original Signal 1 × Processed Signal 2":
+        t1_use, s1_use = t_input_rev, s_input_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    elif op_mode == "Processed Signal 1 × Original Signal 2":
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_original_rev, s2_original_rev
+    else:
+        t1_use, s1_use = t_processed_rev, s_processed_rev
+        t2_use, s2_use = t2_processed_rev, s2_processed_rev
+    min_len = min(len(s1_use), len(s2_use))
+    t_mul = t1_use[:min_len]
+    s_mul = signal_multiplication(s1_use, s2_use)
 
 # --- Plotting ---
 fig, ax = plt.subplots(facecolor=F1_BG)
@@ -151,32 +243,41 @@ color_reversed = "#ff00ff"
 ax.axhline(0, color=F1_SEPARATOR, linewidth=1)
 ax.axvline(0, color=F1_SEPARATOR, linewidth=1)
 
-if is_discrete:
-    ax.stem(t_input, s_input, linefmt=color_original, markerfmt="o", basefmt=" ", label="Original")
-    ax.stem(t_processed, s_processed, linefmt=color_processed, markerfmt="o", basefmt=" ", label="Processed")
-else:
-    ax.plot(t_input, s_input, label="Original", color=color_original, linestyle="--", linewidth=2)
-    ax.plot(t_processed, s_processed, label="Processed", color=color_processed, linewidth=2)
-
+# --- Only show signals involved in the selected operation mode ---
 if menu_operation == "Signal Addition" and t_sum is not None and s_sum is not None:
+    # Show only the two signals being summed and the sum
     if is_discrete:
-        ax.stem(t2, s2, linefmt=color_signal2, markerfmt="o", basefmt=" ", label="Signal 2")
+        ax.stem(t1_use[:min_len], s1_use[:min_len], linefmt=color_processed, markerfmt="o", basefmt=" ", label="Signal 1")
+        ax.stem(t2_use[:min_len], s2_use[:min_len], linefmt=color_signal2, markerfmt="o", basefmt=" ", label="Signal 2")
         ax.stem(t_sum, s_sum, linefmt=color_sum, markerfmt="o", basefmt=" ", label="Sum")
     else:
-        ax.plot(t2, s2, label="Signal 2", color=color_signal2, linestyle="--", linewidth=2)
+        ax.plot(t1_use[:min_len], s1_use[:min_len], label="Signal 1", color=color_processed, linestyle="--", linewidth=2)
+        ax.plot(t2_use[:min_len], s2_use[:min_len], label="Signal 2", color=color_signal2, linestyle="--", linewidth=2)
         ax.plot(t_sum, s_sum, label="Sum", color=color_sum, linewidth=2)
 elif menu_operation == "Signal Multiplication" and t_mul is not None and s_mul is not None:
+    # Show only the two signals being multiplied and the product
     if is_discrete:
-        ax.stem(t2, s2, linefmt=color_signal2, markerfmt="o", basefmt=" ", label="Signal 2")
+        ax.stem(t1_use[:min_len], s1_use[:min_len], linefmt=color_processed, markerfmt="o", basefmt=" ", label="Signal 1")
+        ax.stem(t2_use[:min_len], s2_use[:min_len], linefmt=color_signal2, markerfmt="o", basefmt=" ", label="Signal 2")
         ax.stem(t_mul, s_mul, linefmt=color_product, markerfmt="o", basefmt=" ", label="Product")
     else:
-        ax.plot(t2, s2, label="Signal 2", color=color_signal2, linestyle="--", linewidth=2)
+        ax.plot(t1_use[:min_len], s1_use[:min_len], label="Signal 1", color=color_processed, linestyle="--", linewidth=2)
+        ax.plot(t2_use[:min_len], s2_use[:min_len], label="Signal 2", color=color_signal2, linestyle="--", linewidth=2)
         ax.plot(t_mul, s_mul, label="Product", color=color_product, linewidth=2)
 elif menu_operation == "Time Reversal" and t_rev is not None and s_rev is not None:
+    # Show only the reversed signal
     if is_discrete:
         ax.stem(t_rev, s_rev, linefmt=color_reversed, markerfmt="o", basefmt=" ", label="Reversed")
     else:
         ax.plot(t_rev, s_rev, label="Reversed", color=color_reversed, linewidth=2)
+elif menu_operation == "None":
+    # Show only original and processed
+    if is_discrete:
+        ax.stem(t_input, s_input, linefmt=color_original, markerfmt="o", basefmt=" ", label="Original")
+        ax.stem(t_processed, s_processed, linefmt=color_processed, markerfmt="o", basefmt=" ", label="Processed")
+    else:
+        ax.plot(t_input, s_input, label="Original", color=color_original, linestyle="--", linewidth=2)
+        ax.plot(t_processed, s_processed, label="Processed", color=color_processed, linewidth=2)
 
 ax.legend(facecolor=F1_PANEL, labelcolor=F1_LABEL, edgecolor=F1_ACCENT)
 ax.grid(True, which='major', linestyle='-', color=F1_SEPARATOR, alpha=0.5)
@@ -188,18 +289,16 @@ ax.set_xlim(-2, 2)
 ax.tick_params(colors=F1_LABEL)
 fig.tight_layout()
 
-# --- Interactive plot controls ---
-st.markdown("### Plot Controls")
-plot_col1, plot_col2, plot_col3 = st.columns(3)
-with plot_col1:
+# --- Zoom and Reset Zoom controls ---
+col1, col2, col3 = st.columns(3)
+with col1:
     zoom_in = st.button("Zoom In")
-with plot_col2:
+with col2:
     zoom_out = st.button("Zoom Out")
-with plot_col3:
+with col3:
     reset_zoom = st.button("Reset Zoom")
-reset_plot = st.button("Reset Plot", type="primary")
 
-# --- Implement zoom and reset logic using session state ---
+# --- Only keep Reset Plot button ---
 if "xlim" not in st.session_state:
     st.session_state.xlim = [-2, 2]
 if "ylim" not in st.session_state:
@@ -222,33 +321,60 @@ if zoom_out:
 if reset_zoom:
     st.session_state.xlim = [-2, 2]
     st.session_state.ylim = [ax.get_ylim()[0], ax.get_ylim()[1]]
-if reset_plot:
+
+if st.button("Reset Plot", type="primary"):
+    st.session_state.xlim = [-2, 2]
+    st.session_state.ylim = [ax.get_ylim()[0], ax.get_ylim()[1]]
     st.experimental_rerun()
 
-# --- Re-plot with updated limits ---
 ax.set_xlim(st.session_state.xlim)
 ax.set_ylim(st.session_state.ylim)
 fig.tight_layout()
 st.pyplot(fig, use_container_width=True)
 
-# --- Parameter information below the plot ---
-param_text = (
-    f"**Signal 1**  \n"
-    f"Time Shift: `{shift_param:.2f}`  \n"
-    f"Amplitude Scaling: `{amplitude_scaling_param:.2f}`  \n"
-    f"Time Scaling: `{scaling_param:.2f}`"
-)
+# --- Parameter information below the plot (horizontal layout) ---
 if menu_operation in ["Signal Addition", "Signal Multiplication"]:
-    param_text += (
-        f"\n\n**Signal 2**  \n"
-        f"Time Shift: `{shift_param2:.2f}`  \n"
-        f"Amplitude Scaling: `{amplitude_scaling_param2:.2f}`  \n"
-        f"Time Scaling: `{scaling_param2:.2f}`"
+    st.markdown(
+        f"""
+        <div style="display: flex; gap: 40px;">
+            <div>
+                <b>Signal 1</b><br>
+                Type: <code>{sig_type}</code><br>
+                Time Shift: <code>{shift_param:.2f}</code><br>
+                Amplitude Scaling: <code>{amplitude_scaling_param:.2f}</code><br>
+                Time Scaling: <code>{scaling_param:.2f}</code>
+            </div>
+            <div>
+                <b>Signal 2</b><br>
+                Type: <code>{sig2_type}</code><br>
+                Time Shift: <code>{shift_param2:.2f}</code><br>
+                Amplitude Scaling: <code>{amplitude_scaling_param2:.2f}</code><br>
+                Time Scaling: <code>{scaling_param2:.2f}</code>
+            </div>
+            <div>
+                <b>Graph Type</b><br>
+                <code>{"Discrete" if is_discrete else "Continuous"}</code>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
-st.markdown(param_text)
-
-# --- Only keep Reset Plot button ---
-if st.button("Reset Plot", type="primary"):
-    st.session_state.xlim = [-2, 2]
-    st.session_state.ylim = [ax.get_ylim()[0], ax.get_ylim()[1]]
-    st.experimental_rerun()
+else:
+    st.markdown(
+        f"""
+        <div style="display: flex; gap: 40px;">
+            <div>
+                <b>Signal 1</b><br>
+                Type: <code>{sig_type}</code><br>
+                Time Shift: <code>{shift_param:.2f}</code><br>
+                Amplitude Scaling: <code>{amplitude_scaling_param:.2f}</code><br>
+                Time Scaling: <code>{scaling_param:.2f}</code>
+            </div>
+            <div>
+                <b>Graph Type</b><br>
+                <code>{"Discrete" if is_discrete else "Continuous"}</code>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
